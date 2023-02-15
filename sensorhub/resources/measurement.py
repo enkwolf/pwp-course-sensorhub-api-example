@@ -1,9 +1,11 @@
 import json
 from flask import request, Response, url_for
 from flask_restful import Resource
+from sensorhub import cache
 from sensorhub.constants import *
 from sensorhub.models import Measurement, Sensor
-from sensorhub.utils import SensorhubBuilder, create_error_response
+from sensorhub.utils import SensorhubBuilder, create_error_response, page_key, require_sensor_key
+
 
 class MeasurementItem(Resource):
 
@@ -13,20 +15,16 @@ class MeasurementItem(Resource):
 
 class MeasurementCollection(Resource):
 
+    @cache.cached(timeout=None, make_cache_key=page_key, response_filter=lambda r: False)
     def get(self, sensor):
-        db_sensor = Sensor.query.filter_by(name=sensor).first()
-        if db_sensor is None:
-            return create_error_response(
-                404, "Not found",
-                "No sensor was found with the name {}".format(sensor)
-            )
+        print("Not Cached")
 
         try:
             start = int(request.args.get("start", 0))
         except ValueError:
             return create_error_response(400, "Invalid query string value")
 
-        remaining = Measurement.query.filter_by(sensor=db_sensor).order_by("time").offset(start)
+        remaining = Measurement.query.filter_by(sensor=sensor).order_by("time").offset(start)
 
         body = SensorhubBuilder(
             items=[]
@@ -49,4 +47,12 @@ class MeasurementCollection(Resource):
             )
             body["items"].append(item)
 
-        return Response(json.dumps(body), 200, mimetype=MASON)
+        response = Response(json.dumps(body), 200, mimetype=MASON)
+        if len(body["items"]) == MEASUREMENT_PAGE_SIZE:
+            cache.set(page_key(), response, timeout=None)
+        return response
+
+    @require_sensor_key
+    def post(self, sensor):
+        return Response(501)
+        

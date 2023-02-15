@@ -1,4 +1,5 @@
 import click
+import hashlib
 from flask.cli import with_appcontext
 from sensorhub import db
 
@@ -7,6 +8,18 @@ deployments = db.Table(
     db.Column("deployment_id", db.Integer, db.ForeignKey("deployment.id"), primary_key=True),
     db.Column("sensor_id", db.Integer, db.ForeignKey("sensor.id"), primary_key=True)
 )
+
+class ApiKey(db.Model):
+    
+    key = db.Column(db.String(32), nullable=False, unique=True, primary_key=True)
+    sensor_id = db.Column(db.Integer, db.ForeignKey("sensor.id"), nullable=True)
+    admin =  db.Column(db.Boolean, default=False)
+    
+    sensor = db.relationship("Sensor", uselist=False)
+    
+    @staticmethod
+    def key_hash(key):
+        return hashlib.sha256(key.encode()).digest()
 
 
 class Location(db.Model):
@@ -110,3 +123,18 @@ def generate_test_data():
     
     db.session.add(s)
     db.session.commit()
+
+@click.command("masterkey")
+@with_appcontext
+def generate_master_key():
+    import secrets
+    token = secrets.token_urlsafe()
+    db_key = ApiKey(
+        key=ApiKey.key_hash(token),
+        admin=True
+    )
+    db.session.add(db_key)
+    db.session.commit()
+    print(token)
+    
+#PtjyzrB50rq3plSTUpzT8Ijgui6jYWkA9GY5gRT5QC4

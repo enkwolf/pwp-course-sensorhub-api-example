@@ -5,12 +5,13 @@ from flask_restful import Resource
 from sqlalchemy.exc import IntegrityError
 from sensorhub.models import Sensor
 from sensorhub import db
-from sensorhub.utils import SensorhubBuilder, create_error_response
+from sensorhub.utils import SensorhubBuilder, create_error_response, require_admin
 from sensorhub.constants import *
 
 
 class SensorCollection(Resource):
 
+    @require_admin
     def get(self):
         body = SensorhubBuilder()
 
@@ -18,13 +19,13 @@ class SensorCollection(Resource):
         body.add_control("self", url_for("api.sensorcollection"))
         body.add_control_add_sensor()
         body["items"] = []
-        for db_sensor in Sensor.query.all():
+        for sensor in Sensor.query.all():
             item = SensorhubBuilder(
-                name=db_sensor.name,
-                model=db_sensor.model,
-                location=db_sensor.location and db_sensor.location.name
+                name=sensor.name,
+                model=sensor.model,
+                location=sensor.location and sensor.location.name
             )
-            item.add_control("self", url_for("api.sensoritem", sensor=db_sensor.name))
+            item.add_control("self", url_for("api.sensoritem", sensor=sensor))
             item.add_control("profile", SENSOR_PROFILE)
             body["items"].append(item)
 
@@ -57,24 +58,17 @@ class SensorCollection(Resource):
             )
 
         return Response(status=201, headers={
-            "Location": url_for("api.sensoritem", sensor=request.json["name"])
+            "Location": url_for("api.sensoritem", sensor=sensor)
         })
 
 
 class SensorItem(Resource):
 
     def get(self, sensor):
-        db_sensor = Sensor.query.filter_by(name=sensor).first()
-        if db_sensor is None:
-            return create_error_response(
-                404, "Not found",
-                "No sensor was found with the name {}".format(sensor)
-            )
-
         body = SensorhubBuilder(
-            name=db_sensor.name,
-            model=db_sensor.model,
-            location=db_sensor.location and db_sensor.location.name
+            name=sensor.name,
+            model=sensor.model,
+            location=sensor.location and sensor.location.name
         )
         body.add_namespace("senhub", LINK_RELATIONS_URL)
         body.add_control("self", url_for("api.sensoritem", sensor=sensor))
@@ -88,22 +82,15 @@ class SensorItem(Resource):
             "senhub:measurements-first",
             url_for("api.measurementcollection", sensor=sensor)
         )
-        if db_sensor.location is not None:
+        if sensor.location is not None:
             body.add_control(
                 "senhub:location",
-                url_for("api.locationitem", location=db_sensor.location.sensor)
+                url_for("api.locationitem", location=sensor.location.sensor)
             )
 
         return Response(json.dumps(body), 200, mimetype=MASON)
 
     def put(self, sensor):
-        db_sensor = Sensor.query.filter_by(name=sensor).first()
-        if db_sensor is None:
-            return create_error_response(
-                404, "Not found",
-                "No sensor was found with the name {}".format(sensor)
-            )
-
         if not request.json:
             return create_error_response(
                 415, "Unsupported media type",
@@ -115,8 +102,8 @@ class SensorItem(Resource):
         except ValidationError as e:
             return create_error_response(400, "Invalid JSON document", str(e))
 
-        db_sensor.name = request.json["name"]
-        db_sensor.model = request.json["model"]
+        sensor.name = request.json["name"]
+        sensor.model = request.json["model"]
 
         try:
             db.session.commit()
@@ -129,14 +116,7 @@ class SensorItem(Resource):
         return Response(status=204)
 
     def delete(self, sensor):
-        db_sensor = Sensor.query.filter_by(name=sensor).first()
-        if db_sensor is None:
-            return create_error_response(
-                404, "Not found",
-                "No sensor was found with the name {}".format(sensor)
-            )
-
-        db.session.delete(db_sensor)
+        db.session.delete(sensor)
         db.session.commit()
 
         return Response(status=204)

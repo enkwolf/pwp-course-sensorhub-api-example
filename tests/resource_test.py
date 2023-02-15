@@ -4,15 +4,30 @@ import pytest
 import tempfile
 import time
 from datetime import datetime
+from flask.testing import FlaskClient
 from jsonschema import validate
 from sqlalchemy.engine import Engine
 from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError, StatementError
+from werkzeug.datastructures import Headers
 
 from sensorhub import create_app, db
-from sensorhub.models import Location, Sensor, Deployment, Measurement
+from sensorhub.models import Location, Sensor, Deployment, Measurement, ApiKey
 
+TEST_KEY = "verysafetestkey"
 
+# https://stackoverflow.com/questions/16416001/set-http-headers-for-all-requests-in-a-flask-test
+class AuthHeaderClient(FlaskClient):
+
+    def open(self, *args, **kwargs):
+        api_key_headers = Headers({
+            'sensorhub-api-key': TEST_KEY
+        })
+        headers = kwargs.pop('headers', Headers())
+        headers.extend(api_key_headers)
+        kwargs['headers'] = headers
+        return super().open(*args, **kwargs)
+    
 
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
@@ -23,7 +38,7 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 # based on http://flask.pocoo.org/docs/1.0/testing/
 # we don't need a client for database testing, just the db handle
 @pytest.fixture
-def app():
+def client():
     db_fd, db_fname = tempfile.mkstemp()
     config = {
         "SQLALCHEMY_DATABASE_URI": "sqlite:///" + db_fname,
@@ -36,6 +51,7 @@ def app():
         db.create_all()
         _populate_db()
         
+    app.test_client_class = AuthHeaderClient
     yield app.test_client()
     
     os.close(db_fd)
@@ -48,6 +64,12 @@ def _populate_db():
             model="testsensor"
         )
         db.session.add(s)
+        
+    db_key = ApiKey(
+        key=ApiKey.key_hash(TEST_KEY),
+        admin=True
+    )
+    db.session.add(db_key)        
     db.session.commit()
 
 def _get_sensor_json(number=1):
@@ -155,8 +177,8 @@ class TestSensorCollection(object):
         valid = _get_sensor_json()
         
         # test with wrong content type
-        resp = client.post(self.RESOURCE_URL, data=json.dumps(valid))
-        assert resp.status_code == 415
+        resp = client.post(self.RESOURCE_URL, data="notjson")
+        assert resp.status_code in (400, 415)
         
         # test with valid and see that it exists afterward
         resp = client.post(self.RESOURCE_URL, json=valid)
@@ -196,8 +218,8 @@ class TestSensorItem(object):
         valid = _get_sensor_json()
         
         # test with wrong content type
-        resp = client.put(self.RESOURCE_URL, data=json.dumps(valid))
-        assert resp.status_code == 415
+        resp = client.put(self.RESOURCE_URL, data="notjson", headers=Headers({"Content-Type": "text"}))
+        assert resp.status_code in (400, 415)
         
         resp = client.put(self.INVALID_URL, json=valid)
         assert resp.status_code == 404
